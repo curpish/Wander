@@ -1,0 +1,6 @@
+{
+  "name": "drift",
+  "version": "0.1.0",
+  "description": "A tiny procedural music desk: atmospheric downtempo and microhouse, synthesized live, for the background.",
+  "types": "./types/index.d.ts"
+}
