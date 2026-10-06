@@ -74,3 +74,27 @@ Left dangling:
 - The mix was set by reading meters, so it probably wants tuning by ear.
 - Open questions from the CLAUDE.md chat: when journal entries get written,
   and whether I commit on my own or wait to be asked.
+
+Later the same day, a new thread: Kaelin wanted a gamified way to practise
+Python again, likes boot.dev, and left the shape of it to me.
+
+First try: `trail/` as eight files of function stubs with a checker. It
+didn't land. Kaelin: "It's not very interactive or intuitive. I was asked to
+replace ... on the very first stop, and I did so a couple of different ways.
+I'm not understanding the intent or the educator approach." What they'd
+written inside `label` was the example calls from its docstring. I had
+assumed the shape of a function body was already in hand and never asked.
+
+Second try, same folder: a conversation in the terminal. One line at a live
+prompt, a guess before Python answers, and functions written in a desk file
+that's checked on save. Six stops that build a cozy game's options menu
+(Kaelin had added a "Cozy Mode" setting to my example, so the game has one)
+and end with a menu you can actually move around in, running on your own
+functions. Stop 2 is entirely about what goes inside a function.
+
+Left dangling:
+- Kaelin hasn't walked the second version yet. Every step passes with my
+  answers, but that isn't the same as it making sense to someone.
+- Check-on-save and the single-key commands at the desk were tested with a
+  stand-in for the keyboard, not in a real terminal.
+- Whether `progress.json` and `desk.py` belong in git.
