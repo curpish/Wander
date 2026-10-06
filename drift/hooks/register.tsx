@@ -27,6 +27,8 @@ const perTrack = (value: (track: Track) => number) =>
 const DEFAULTS: DriftSettings = {
   volume: 0.5,
   tempo: 108,
+  bpmMin: 96,
+  bpmMax: 120,
   energy: 2,
   mood: 'dusk',
   seed: 1,
@@ -36,6 +38,7 @@ const DEFAULTS: DriftSettings = {
   seeds: perTrack(() => 0),
   color: 0.5,
   bow: 0.7,
+  haze: 0.7,
   wander: true,
   journey: true,
 }
@@ -46,6 +49,11 @@ const now = atom({ plugin: 'drift', key: 'now' } as const, null)
 const step = atom({ plugin: 'drift', key: 'step' } as const, 0)
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x))
+const BPM_FLOOR = 60
+const BPM_CEILING = 160
+// The moods keep their order of tempo, fitted to the range asked for: the
+// slowest (fog, 96) sits at the bottom of it, the quickest (glass, 120) at the top.
+const tempoFor = (bpm: number, s: DriftSettings) => Math.round(s.bpmMin + ((bpm - 96) / 24) * (s.bpmMax - s.bpmMin))
 const tenths = (x: number) => Math.round(x * 10) / 10
 const reseed = (seed: number) => (seed * 31 + 17) % 100000
 
@@ -56,10 +64,14 @@ const sanitize = (saved: unknown): DriftSettings => {
   const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback)
   const levels: Partial<Record<Track, unknown>> = typeof o.levels === 'object' && o.levels !== null ? o.levels : {}
   const seeds: Partial<Record<Track, unknown>> = typeof o.seeds === 'object' && o.seeds !== null ? o.seeds : {}
+  const bpmMin = clamp(Math.round(num(o.bpmMin, DEFAULTS.bpmMin)), BPM_FLOOR, BPM_CEILING)
+  const bpmMax = clamp(Math.round(num(o.bpmMax, DEFAULTS.bpmMax)), bpmMin, BPM_CEILING)
 
   return {
     volume: clamp(num(o.volume, DEFAULTS.volume), 0, 1),
-    tempo: clamp(Math.round(num(o.tempo, DEFAULTS.tempo)), 70, 132),
+    tempo: clamp(Math.round(num(o.tempo, DEFAULTS.tempo)), bpmMin, bpmMax),
+    bpmMin,
+    bpmMax,
     energy: clamp(Math.round(num(o.energy, DEFAULTS.energy)), 0, 4),
     mood: MOODS.some(m => m.name === o.mood) ? (o.mood as Mood) : DEFAULTS.mood,
     seed: Math.abs(Math.round(num(o.seed, DEFAULTS.seed))) % 100000,
@@ -69,6 +81,7 @@ const sanitize = (saved: unknown): DriftSettings => {
     seeds: perTrack(t => Math.abs(Math.round(num(seeds[t], 0))) % 100000),
     color: clamp(tenths(num(o.color, DEFAULTS.color)), 0, 1),
     bow: clamp(tenths(num(o.bow, DEFAULTS.bow)), 0, 1),
+    haze: clamp(tenths(num(o.haze, DEFAULTS.haze)), 0, 1),
     wander: typeof o.wander === 'boolean' ? o.wander : DEFAULTS.wander,
     journey: typeof o.journey === 'boolean' ? o.journey : DEFAULTS.journey,
   }
@@ -112,6 +125,7 @@ type Message = {
   kind?: string
   next?: string
   arrived?: boolean
+  haze?: number
 }
 
 // Somewhere the journey passes through once is made on the spot and never
@@ -165,6 +179,7 @@ const onLine = async ($: EngineInterface, line: string) => {
       key: msg.key,
       kind: msg.kind,
       next: msg.next,
+      haze: msg.haze,
     }
     await update($, now, () => bar)
     await follow($, msg)
@@ -211,6 +226,12 @@ const start = async ($: EngineInterface) => {
     String(s.color),
     '--bow',
     String(s.bow),
+    '--haze',
+    String(s.haze),
+    '--bpmMin',
+    String(s.bpmMin),
+    '--bpmMax',
+    String(s.bpmMax),
     '--wander',
     s.wander ? '1' : '0',
     '--journey',
@@ -281,6 +302,33 @@ const change = ($: EngineInterface, fn: (s: DriftSettings) => DriftSettings, isS
   await push($)
 }
 
+// What has been typed into a field and not yet entered. The pane redraws
+// several times a second while music plays; this is what keeps the typing.
+const drafts: Record<string, string> = {}
+
+// Enter in one of the bpm fields. Moving one end of the range past the other
+// carries the other along, and the tempo is kept inside.
+const typed = ($: EngineInterface, key: 'tempo' | 'bpm-min' | 'bpm-max', text: string) => {
+  delete drafts[key]
+  const n = Number.parseInt(text.trim(), 10)
+  if (!Number.isFinite(n)) {
+    $.ui.toast('drift: type a whole number of bpm, then Enter')
+
+    return undefined
+  }
+
+  return change(
+    $,
+    old => {
+      const lo = key === 'bpm-min' ? clamp(n, BPM_FLOOR, BPM_CEILING) : key === 'bpm-max' ? Math.min(old.bpmMin, clamp(n, BPM_FLOOR, BPM_CEILING)) : old.bpmMin
+      const hi = key === 'bpm-max' ? clamp(n, BPM_FLOOR, BPM_CEILING) : Math.max(old.bpmMax, lo)
+
+      return { ...old, bpmMin: lo, bpmMax: hi, tempo: clamp(key === 'tempo' ? n : old.tempo, lo, hi) }
+    },
+    true,
+  )()
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -336,7 +384,7 @@ export const register: Register = on => {
       return { text: `drift does not know "${arg}". Try /drift, /drift stop, /drift hide, /drift diary, or a mood: ${MOODS.map(m => m.name).join(', ')}.` }
     }
     if (mood !== undefined) {
-      await change($, s => ({ ...s, mood: mood.name, tempo: mood.bpm }), true)()
+      await change($, s => ({ ...s, mood: mood.name, tempo: tempoFor(mood.bpm, s) }), true)()
     }
     await $.ui.open({ id: PANE, title: 'drift' })
     await start($)
@@ -345,13 +393,16 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const table = $.ui.resolve(e)
+    const { Box, Button, Text } = table
+    // a surface with no text field shows the numbers and keeps the buttons
+    const Input = 'Input' in table ? table.Input : undefined
     const s = sanitize(await read($, settings))
     const isOn = await read($, playing)
     const bar = await read($, now)
     const at = await read($, step)
 
-    const nudge = (key: 'volume' | 'tempo' | 'energy' | 'color' | 'bow', by: number, lo: number, hi: number) =>
+    const nudge = (key: 'volume' | 'tempo' | 'energy' | 'color' | 'bow' | 'haze', by: number, lo: number, hi: number) =>
       change(
         $,
         old => ({ ...old, [key]: clamp(Math.round((old[key] + by) * 100) / 100, lo, hi) }),
@@ -359,10 +410,31 @@ export const register: Register = on => {
       )
     const fade = (track: Track, by: number) =>
       change($, old => ({ ...old, levels: { ...old.levels, [track]: clamp(tenths(old.levels[track] + by), 0, 1.5) } }))
+    const field = (key: 'tempo' | 'bpm-min' | 'bpm-max', label: string, value: number) =>
+      Input === undefined ? (
+        <Text>
+          {label} {value}
+        </Text>
+      ) : (
+        <Box width={label.length + 12}>
+          <Input
+            key={key}
+            label={`${label} `}
+            value={drafts[key] ?? String(value)}
+            submitLabel="set"
+            onInput={text => {
+              drafts[key] = text
+            }}
+            onSubmit={text => typed($, key, text)}
+          />
+        </Box>
+      )
     const volumeBars = Math.round(s.volume * 10)
     const heading = bar?.to
     const colorBars = Math.round(s.color * 10)
     const bowBars = Math.round(s.bow * 10)
+    const hazeBars = Math.round(s.haze * 10)
+    const hazeNow = bar?.haze
 
     return (
       <Box flexDirection="column">
@@ -409,7 +481,7 @@ export const register: Register = on => {
               key={`mood-${m.name}`}
               label={m.name}
               variant={m.name === s.mood ? 'primary' : 'secondary'}
-              onPress={change($, old => ({ ...old, mood: m.name, tempo: m.bpm }), true)}
+              onPress={change($, old => ({ ...old, mood: m.name, tempo: tempoFor(m.bpm, old) }), true)}
             />
           ))}
         </Box>
@@ -422,9 +494,14 @@ export const register: Register = on => {
           </Text>
         </Box>
         <Box columnGap={1}>
-          <Button key="tempo-down" label="-" onPress={nudge('tempo', -2, 70, 132)} />
-          <Button key="tempo-up" label="+" onPress={nudge('tempo', 2, 70, 132)} />
-          <Text>{s.tempo} bpm</Text>
+          <Button key="tempo-down" label="-" onPress={nudge('tempo', -2, s.bpmMin, s.bpmMax)} />
+          <Button key="tempo-up" label="+" onPress={nudge('tempo', 2, s.bpmMin, s.bpmMax)} />
+          {field('tempo', 'bpm', s.tempo)}
+        </Box>
+        <Box columnGap={1}>
+          <Text dimColor>bpm range</Text>
+          {field('bpm-min', 'min', s.bpmMin)}
+          {field('bpm-max', 'max', s.bpmMax)}
         </Box>
         <Box columnGap={1} marginBottom={1}>
           <Button key="volume-down" label="-" onPress={nudge('volume', -0.1, 0, 1)} />
@@ -494,7 +571,17 @@ export const register: Register = on => {
             {'\u25ae'.repeat(bowBars) + '\u25af'.repeat(10 - bowBars)} {BOWS[Math.min(4, Math.floor(s.bow * 5))] ?? ''}
           </Text>
         </Box>
+        <Box columnGap={1}>
+          <Text dimColor>haze     </Text>
+          <Button key="haze-down" label="-" onPress={nudge('haze', -0.1, 0, 1)} />
+          <Button key="haze-up" label="+" onPress={nudge('haze', 0.1, 0, 1)} />
+          <Text>
+            {'\u25ae'.repeat(hazeBars) + '\u25af'.repeat(10 - hazeBars)}
+            {isOn && hazeNow !== undefined ? ` now ${hazeNow < 0.12 ? 'clear' : hazeNow < 0.45 ? 'open' : hazeNow < 0.8 ? 'hazy' : 'deep'}` : ''}
+          </Text>
+        </Box>
         <Text dimColor>p play/stop · r reroll all · w wander · j journey · 1-7 mute</Text>
+        <Text dimColor>bpm fields: click, type a number, Enter</Text>
         <Text dimColor>per track: - + level · {'↻'} reroll just that one</Text>
       </Box>
     )

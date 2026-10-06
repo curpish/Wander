@@ -6,6 +6,9 @@ export type Track = 'kick' | 'bass' | 'hats' | 'perc' | 'piano' | 'strings' | 'a
 export type DriftSettings = {
   volume: number
   tempo: number
+  /** The span of tempo in use: the moods are spread across it, slowest to quickest. */
+  bpmMin: number
+  bpmMax: number
   energy: number
   mood: Mood
   seed: number
@@ -20,6 +23,8 @@ export type DriftSettings = {
   color: number
   /** The strings: 0 the synth pad, 1 bowed strings, between a blend. */
   bow: number
+  /** How far the ambience is let to swell: 0 keeps every moment clean. */
+  haze: number
   /** The engine moves between energies by itself, and rarely moods. */
   wander: boolean
   /** The harmony travels: leaves home, stops in other keys, comes back. */
@@ -39,6 +44,8 @@ export type Now = {
   kind?: string
   /** Where it is about to go, once that is decided. */
   next?: string
+  /** How deep the haze is at this moment, 0 (clear) to about 1.3. */
+  haze?: number
 }
 
 declare module 'claude-code' {

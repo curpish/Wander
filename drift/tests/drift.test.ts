@@ -95,7 +95,7 @@ test('mood, mute and stop reach the engine', { timeoutMs: 20_000 }, async ($, on
   expect(desk.sent().mood).toBe('fog')
   expect(desk.sent().tempo).toBe(96)
   expect(desk.sent().quit).toBe(false)
-  expect(await ui.find({ type: 'Text', text: /96 bpm/ })).toBeDefined()
+  expect((await ui.find({ key: 'tempo' }))?.props.value).toBe('96')
 
   await ui.press({ key: 'mute-kick' })
   expect(desk.sent().mute).toEqual(['kick'])
@@ -133,7 +133,7 @@ test('the desk follows a wandering engine, and wander can be switched off', { ti
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
   expect(await ui.find({ type: 'Text', text: /flow energy, heading for bloom/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /114 bpm/ })).toBeDefined()
+  expect((await ui.find({ key: 'tempo' }))?.props.value).toBe('114')
   expect((await ui.find({ key: 'mood-ember' }))?.props.variant).toBe('primary')
 
   await ui.press({ key: 'wander' })
@@ -154,6 +154,7 @@ test('the desk says where the journey is, and keeps what it will not see again',
     kind: 'once',
     next: 'home',
     arrived: true,
+    haze: 0.05,
   })
   expect(desk.spawned[0]).toContain('--journey')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -164,4 +165,29 @@ test('the desk says where the journey is, and keeps what it will not see again',
 
   await ui.press({ key: 'journey' })
   expect(desk.sent().journey).toBe(false)
+
+  // the haze row says what the air is doing now, and sets how far it may go
+  expect(await ui.find({ type: 'Text', text: /now clear/ })).toBeDefined()
+  await ui.press({ key: 'haze-down' })
+  expect(Math.round(desk.sent().haze * 10)).toBe(6)
+})
+
+test('a tempo and a range of tempo can be typed', { timeoutMs: 20_000 }, async ($, on) => {
+  const desk = await openDesk($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+  await ui.input({ key: 'tempo', text: '104' })
+  expect(desk.sent().tempo).toBe(104)
+
+  // the range holds the tempo inside it, and the moods are spread across it
+  await ui.input({ key: 'bpm-max', text: '100' })
+  expect(desk.sent().bpmMax).toBe(100)
+  expect(desk.sent().tempo).toBe(100)
+  await ui.input({ key: 'bpm-min', text: '80' })
+  await ui.press({ key: 'mood-fog' })
+  expect(desk.sent().tempo).toBe(80)
+
+  // what is not a number changes nothing
+  await ui.input({ key: 'tempo', text: 'fast' })
+  expect(desk.sent().tempo).toBe(80)
 })

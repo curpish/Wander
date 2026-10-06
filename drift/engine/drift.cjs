@@ -48,6 +48,9 @@ const ctl = {
   seeds: perTrack(0), // each track's own reroll, on top of the seed
   color: 0.5, // the air: 0 a low rumble, 1 a bright hiss
   bow: 0.7, // the strings: 0 the synth pad, 1 bowed strings, between a blend
+  haze: 0.7, // how far the ambience is let to swell; 0 keeps every moment clean
+  bpmMin: 96, // the span of tempo the moods are spread across:
+  bpmMax: 120, // the slowest mood sits at the bottom, the quickest at the top
   journey: false, // let the harmony travel: leave home, stop in other keys, return
   wander: false, // let the music move between energies, and rarely moods
   rev: 0, // bumped when a person sets energy, mood or tempo by hand
@@ -59,7 +62,7 @@ let isSweep = false
 
 function applyControl(o) {
   if (typeof o.volume === 'number') ctl.volume = clamp(o.volume, 0, 1)
-  if (typeof o.tempo === 'number') ctl.tempo = clamp(o.tempo, 70, 132)
+  if (typeof o.tempo === 'number') ctl.tempo = clamp(o.tempo, 60, 160)
   if (typeof o.energy === 'number') ctl.energy = clamp(Math.round(o.energy), 0, 4)
   if (typeof o.mood === 'string' && MOODS[o.mood]) ctl.mood = o.mood
   if (typeof o.seed === 'number') ctl.seed = o.seed >>> 0
@@ -70,6 +73,9 @@ function applyControl(o) {
   }
   if (typeof o.color === 'number') ctl.color = clamp(o.color, 0, 1)
   if (typeof o.bow === 'number') ctl.bow = clamp(o.bow, 0, 1)
+  if (typeof o.haze === 'number') ctl.haze = clamp(o.haze, 0, 1)
+  if (typeof o.bpmMin === 'number') ctl.bpmMin = clamp(o.bpmMin, 60, 160)
+  if (typeof o.bpmMax === 'number') ctl.bpmMax = clamp(o.bpmMax, 60, 160)
   if (o.wander !== undefined) ctl.wander = Boolean(o.wander)
   if (o.journey !== undefined) ctl.journey = Boolean(o.journey)
   if (typeof o.rev === 'number') ctl.rev = o.rev
@@ -84,6 +90,7 @@ function parseArgs(argv) {
       renderSecs = Number(argv[++i])
       renderOut = argv[++i]
     } else if (a === '--sweep') isSweep = true
+    else if (a === '--weather') continue
     else if (a === '--mood') o.mood = argv[++i]
     else if (a === '--mute') o.mute = String(argv[++i]).split(',').filter(Boolean)
     else if (a === '--levels' || a === '--seeds') {
@@ -598,8 +605,8 @@ const combL = COMBS.map(n => line(n))
 const combR = COMBS.map(n => line(n + 23))
 const allL = ALLPS.map(n => line(n))
 const allR = ALLPS.map(n => line(n + 23))
-const REV_FB = 0.91
-const REV_DAMP = 0.3
+let revFb = 0.9 // how long the room rings
+let revDamp = 0.3 // how dark its tail is
 let revHpL = 0
 let revHpR = 0
 
@@ -608,8 +615,8 @@ function reverbTank(x, combs, alls) {
   for (let j = 0; j < 8; j++) {
     const c = combs[j]
     const y = c.b[c.i]
-    c.s = y * (1 - REV_DAMP) + c.s * REV_DAMP
-    c.b[c.i] = x + c.s * REV_FB
+    c.s = y * (1 - revDamp) + c.s * revDamp
+    c.b[c.i] = x + c.s * revFb
     if (++c.i === c.b.length) c.i = 0
     acc += y
   }
@@ -639,6 +646,91 @@ function chorusTap(buf, d) {
 }
 
 const AIR_COMP = 1.2
+
+// ---------------------------------------------------------------- the mix in motion
+// Three things move the mix. Every place has a room of its own, and the
+// sound slides from one room into the next. The effects mark what the music
+// does: a throw of delay, a wash on a far crossing. And over all of it lies
+// the haze, 0 to 1: how far the ambience has swollen. It gathers slowly and,
+// now and then, is simply gone, and the dry, close sound left behind is the
+// point of it.
+
+const HOME_ROOM = { fb: 0.9, damp: 0.3, wet: 1, delFb: 0.42, delMul: 3, drive: 0.1, haze: 0.4 }
+const room = { ...HOME_ROOM } // the room as it sounds now, on its way to the place's own
+const fx = {
+  e: 2, // the energy, smoothed: effects follow it over a couple of bars
+  haze: 0.3,
+  tide: 0,
+  swellUntil: -1,
+  clearFrom: -1,
+  clearUntil: -1,
+  lastClear: 0,
+  cross: 0,
+  throw: 0,
+  lvl: 1,
+  env: 0,
+  gr: 0,
+  grN: 0,
+  bassEnv: 0,
+  lowL: 0,
+  lowR: 0,
+  wow: 0,
+  wowPrev: 1,
+  phLfo: 0,
+  phFbL: 0,
+  phFbR: 0,
+}
+let RH = rng(5) // the weather: tides and clearings of haze
+
+// Loudness is evened out across the energies, most of the way: a quiet
+// energy is thinner, not just turned down. Measured, see the README.
+const LEVEL = [1.12, 1.11, 1, 1, 1]
+const COMP_T = 0.12 // the bus compressor starts here (about -18 dB)
+const COMP_SLOPE = -0.62 // 2.6 to 1
+const COMP_MAKEUP = 1.3
+
+function makeRoom(kind, r) {
+  if (kind === 'home') return { ...HOME_ROOM }
+  if (kind === 'once') {
+    // somewhere seen once is an extreme: a bare, close room, or a vast one
+    if (r() < 0.3) return { fb: 0.8, damp: 0.5, wet: 0.5, delFb: 0.18, delMul: 2, drive: 0, haze: 0.04 }
+    return {
+      fb: 0.945 + r() * 0.015,
+      damp: 0.1 + r() * 0.2,
+      wet: 1.5,
+      delFb: 0.58 + r() * 0.12,
+      delMul: pick(r, [3, 4, 6]),
+      drive: 0.3 + r() * 0.5,
+      haze: 0.85 + r() * 0.15,
+    }
+  }
+  return {
+    fb: 0.86 + r() * 0.08,
+    damp: 0.15 + r() * 0.4,
+    wet: 0.8 + r() * 0.5,
+    delFb: 0.28 + r() * 0.27,
+    delMul: pick(r, [2, 3, 3, 4]),
+    drive: r() * 0.4,
+    haze: 0.3 + r() * 0.45,
+  }
+}
+
+// a phaser: four allpass stages whose notches sweep slowly through the mids
+const phL = new Float32Array(8)
+const phR = new Float32Array(8)
+function allpassCoef(hz) {
+  const t = Math.tan((Math.PI * hz) / SR)
+  return (1 - t) / (1 + t)
+}
+function phaser(st, x, a) {
+  for (let k = 0; k < 8; k += 2) {
+    const y = -a * x + st[k] + a * st[k + 1]
+    st[k] = x
+    st[k + 1] = y
+    x = y
+  }
+  return x
+}
 const air = { b0: 0, b1: 0, b2: 0, c0: 0, c1: 0, c2: 0, lpL: 0, lpR: 0, hpL: 0, hpR: 0, lfo: 0, ck: 0, ckLp: 0, ckPan: 0 }
 
 // ---------------------------------------------------------------- music state
@@ -746,6 +838,7 @@ function makePlace(parent, mode, r, name, kind) {
     scale: MAJOR.map((_, k) => (MAJOR[(first + k) % 7] - off + 12) % 12),
     avoid: MODES[mode].avoid,
     prog: chords,
+    room: makeRoom(kind, r),
   }
 }
 
@@ -815,6 +908,13 @@ function travel() {
     trip.isFar = from.kind === 'once' || place.kind === 'once'
     trip.stay = place.kind === 'home' ? 3 + Math.floor(RJ() * 3) : 2 + Math.floor(RJ() * 2)
     if (place.kind === 'once') trip.lastOnce = bar
+    // coming home, more often than not, the air clears
+    if (place === home && RH() < 0.7) {
+      fx.swellUntil = bar + 2
+      fx.clearFrom = bar + 2
+      fx.clearUntil = bar + 10
+      fx.lastClear = bar + 2
+    }
     trip.arrived = true
     return
   }
@@ -832,6 +932,29 @@ function travel() {
     trip.last = place
     if (RJ() < 0.5) trip.next = home
     else trip.next = canOnce && RO() < 0.3 ? makeOnce() : pick(RJ, others)
+  }
+}
+
+// Where the haze is heading. A far crossing is a full wash. A clearing is
+// none at all. Before a clearing it gathers, so the drop is felt.
+function hazeTarget() {
+  if (!place) return HOME_ROOM.haze
+  if (trip.isFar && bar < trip.pivotUntil) return 1
+  if (bar >= fx.clearFrom && bar < fx.clearUntil) return 0
+  if (bar < fx.swellUntil) return Math.min(1, place.room.haze + 0.5)
+  return clamp(place.room.haze + fx.tide, 0.05, 1)
+}
+
+// Every eight bars the haze takes a new lean, and now and then it is
+// set to gather for a section and then clear for the next.
+function weather() {
+  if (bar % 8 !== 0) return
+  fx.tide = (RH() - 0.5) * 0.4
+  if (bar > 0 && bar - fx.lastClear >= 48 && bar >= fx.clearUntil && RH() < 0.35) {
+    fx.swellUntil = bar + 8
+    fx.clearFrom = bar + 8
+    fx.clearUntil = bar + 16
+    fx.lastClear = bar + 8
   }
 }
 
@@ -1023,7 +1146,8 @@ function wander() {
     // a new mood is a new home: only moved to from the old one
     if (cur.energy <= 1 && place === home && !trip.next && bar - arc.moodAt >= 96 && RA() < 0.25) {
       cur.mood = pick(RA, Object.keys(MOODS).filter(m => m !== cur.mood))
-      arc.tempoTo = MOODS[cur.mood].bpm
+      // the moods keep their order of tempo, fitted to the range that was asked for
+      arc.tempoTo = Math.round(ctl.bpmMin + ((MOODS[cur.mood].bpm - 96) / 24) * Math.max(0, ctl.bpmMax - ctl.bpmMin))
       arc.moodAt = bar
       arc.hold = 1
       return
@@ -1056,11 +1180,13 @@ function onBar(w) {
       buildJourney()
       RP = trackRng('piano', 0)
       if (isNewSeed) RA = rng(live.seed * 31337 + 5)
+      if (isNewSeed) RH = rng(live.seed * 104723 + 9)
       if (isNewSeed || motif.length === 0) genMotif()
       patKey = ''
     }
   }
   travel()
+  weather()
   if (live.pianoSeed !== ctl.seeds.piano) {
     live.pianoSeed = ctl.seeds.piano
     RP = trackRng('piano', 0)
@@ -1188,6 +1314,7 @@ function onBar(w) {
       key: `${NOTE_NAMES[place.root % 12]} ${place.mode}`,
       kind: place.kind,
       next: trip.next ? trip.next.name : undefined,
+      haze: Math.round(clamp(fx.haze * (ctl.haze / 0.7), 0, 1.3) * 100) / 100,
       arrived: trip.arrived || undefined,
     })
   }
@@ -1253,12 +1380,15 @@ function onStep(w) {
     for (const n of barPiano) {
       if (n.step !== step) continue
       const v = clamp(n.v * feel(), 0.1, 0.95)
+      // now and then a phrase's last note is thrown into the delay
+      const isThrow = n === barPiano[barPiano.length - 1] && H() < 0.3
+      if (isThrow) fx.throw = 1
       spawn(pianoVoice(n.m, v, (n.len * stepSamples) / SR, mood.bright), {
         wait: at + H() * 0.006 * SR,
         gain: 0.38 * G.piano,
         pan: clamp((n.m - 64) / 40, -0.5, 0.5),
         rev: 0.4,
-        del: 0.22,
+        del: isThrow ? 0.8 : 0.22,
       })
     }
   }
@@ -1334,16 +1464,17 @@ function renderBlock(out) {
     if (!isAlive) voices.splice(vi, 1)
   }
 
-  // the kick leans on the pad and the bass, gently
+  // the kick leans on the pad and the bass: gently when quiet, harder when full
+  fx.e += (cur.energy - fx.e) * 0.0012
   duckT *= 0.965
   duck += (duckT - duck) * 0.35
-  const duckNow = 1 - 0.38 * duck
+  const duckNow = 1 - (0.2 + 0.08 * fx.e) * duck
   const duckStep = (duckNow - duckPrev) / BLOCK
 
   pad.lfo += (TAU * 0.05 * BLOCK) / SR
-  const cutoff = (900 + 300 * cur.energy + (isBreak ? 500 : 0)) * (1 + 0.35 * Math.sin(pad.lfo))
+  const cutoff = (900 + 300 * fx.e + (isBreak ? 500 : 0)) * (1 + 0.35 * Math.sin(pad.lfo))
   const pf = 2 * Math.sin((Math.PI * cutoff) / SR)
-  const delTarget = clamp(stepSamples * 3, 2000, DEL_N - 4)
+  const delTarget = clamp(stepSamples * room.delMul, 2000, DEL_N - 4)
   const gStr = G.strings * 0.7
   // pad and bowed strings cross over at equal power
   bowMix += (ctl.bow - bowMix) * 0.05
@@ -1358,6 +1489,42 @@ function renderBlock(out) {
   const aHiss = airColor * airColor * 0.5
   const aCk = 0.15 + 0.6 * airColor
   const airAmp = 0.03 * gAir * (0.7 + 0.3 * Math.sin(air.lfo)) * (1 + AIR_COMP * (1 - airColor) * (1 - airColor))
+  // the room slides toward the place's own; the haze toward where it is heading
+  const want = place ? place.room : HOME_ROOM
+  room.fb += (want.fb - room.fb) * 0.002
+  room.damp += (want.damp - room.damp) * 0.002
+  room.wet += (want.wet - room.wet) * 0.002
+  room.delFb += (want.delFb - room.delFb) * 0.002
+  room.drive += (want.drive - room.drive) * 0.002
+  room.delMul = want.delMul
+  const isCrossing = trip.isFar && bar < trip.pivotUntil
+  fx.cross += ((isCrossing ? 1 : 0) - fx.cross) * 0.01
+  const hazeTo = hazeTarget()
+  // it gathers over seconds and clears in a breath
+  fx.haze += (hazeTo - fx.haze) * (hazeTo < fx.haze ? 0.02 : isCrossing ? 0.006 : 0.0015)
+  const h = clamp(fx.haze * (ctl.haze / 0.7), 0, 1.3)
+  revFb = clamp(room.fb + 0.06 * (h - 0.3), 0.78, 0.968)
+  revDamp = room.damp
+  const wetG = Math.min(2.2, room.wet * (0.3 + 2.3 * h))
+  const revSend = 1 + 1.2 * fx.cross
+  const dryG = 1 - 0.25 * fx.cross
+  fx.throw *= 0.9988
+  const delFb = clamp(room.delFb + 0.3 * (h - 0.3) + 0.25 * fx.throw, 0.1, 0.78)
+  const delG = 0.5 * Math.min(1.7, 0.4 + 2 * h)
+  const phDepth = clamp((h - 0.25) / 0.6, 0, 1)
+  fx.phLfo += (TAU * 0.09 * BLOCK) / SR
+  const phA = allpassCoef(300 * Math.pow(6, 0.5 + 0.5 * Math.sin(fx.phLfo)))
+  const phB = allpassCoef(300 * Math.pow(6, 0.5 + 0.5 * Math.sin(fx.phLfo + 1.9)))
+  // tape wow: the echoes drift a little in pitch, more in deeper haze
+  fx.wow += (TAU * 0.37 * BLOCK) / SR
+  const wowNow = 1 + 0.003 * h * Math.sin(fx.wow)
+  const wowStep = (wowNow - fx.wowPrev) / BLOCK
+  const chDepth = 120 + 200 * Math.min(1, h)
+  // Deep haze is held back a little and a clearing brought forward, so the
+  // difference is one of space and closeness more than of volume.
+  const hazeTrim = h < 0.3 ? 1 + (0.1 * (0.3 - h)) / 0.3 : 1 - 0.2 * Math.min(1, h - 0.3)
+  fx.lvl += (LEVEL[cur.energy] * hazeTrim - fx.lvl) * 0.004
+  const drive = 1.1 + 0.5 * room.drive * (0.5 + h)
   const volTarget = ctl.volume * (ctl.quit ? 0 : 1)
 
   for (let i = 0; i < BLOCK; i++) {
@@ -1371,8 +1538,8 @@ function renderBlock(out) {
     chBufL[chW] = pad.lowL
     chBufR[chW] = pad.lowR
     chPh += (TAU * 0.31) / SR
-    const dA = 530 + 180 * Math.sin(chPh)
-    const dB = 530 + 180 * Math.cos(chPh)
+    const dA = 530 + chDepth * Math.sin(chPh)
+    const dB = 530 + chDepth * Math.cos(chPh)
     const sL = (pad.lowL * 0.6 + chorusTap(chBufL, dA) * 0.5 + chorusTap(chBufR, dB * 1.31) * 0.2) * gStr * dk * padG
     const sR = (pad.lowR * 0.6 + chorusTap(chBufR, dB) * 0.5 + chorusTap(chBufL, dA * 1.31) * 0.2) * gStr * dk * padG
     if (++chW === CH_N) chW = 0
@@ -1382,6 +1549,15 @@ function renderBlock(out) {
     bowLpR += 0.47 * (bowR[i] - bowLpR)
     const qL = bowLpL * gStr * dk * bowG
     const qR = bowLpR * gStr * dk * bowG
+
+    // the strings' low end steps back while the bass is sounding
+    let strL = sL + qL
+    let strR = sR + qR
+    fx.lowL += 0.0253 * (strL - fx.lowL)
+    fx.lowR += 0.0253 * (strR - fx.lowR)
+    const carve = Math.min(1, fx.bassEnv * 9) * 0.8
+    strL -= fx.lowL * carve
+    strR -= fx.lowR * carve
 
     // air: pink noise, a little crackle
     const wl = nz()
@@ -1407,37 +1583,59 @@ function renderBlock(out) {
     const crackle = air.ckLp * gAir * 0.12
 
     const bs = Math.tanh(bassB[i] * 1.4) * 0.72 * dk
+    const bsAbs = Math.abs(bs)
+    fx.bassEnv += (bsAbs - fx.bassEnv) * (bsAbs > fx.bassEnv ? 0.01 : 0.0002)
 
     // ping-pong delay, a dotted eighth long, darker with each bounce
     delLen += (delTarget - delLen) * 0.0003
-    const dl = tap(delBufL, delLen)
-    const dr = tap(delBufR, delLen)
+    const wowLen = delLen * (fx.wowPrev + wowStep * i)
+    const dl = tap(delBufL, wowLen)
+    const dr = tap(delBufR, wowLen)
     delLpL += 0.3 * (dl - delLpL)
     delLpR += 0.3 * (dr - delLpR)
-    delBufL[delW] = delS[i] + delLpR * 0.42
+    delBufL[delW] = delS[i] + delLpR * delFb
     delBufR[delW] = delLpL
     if (++delW === DEL_N) delW = 0
 
-    const rinL = (revL[i] + sL * 0.5 + qL * 0.55 + delLpL * 0.25 + air.lpL * airAmp * 2) * 0.03
-    const rinR = (revR[i] + sR * 0.5 + qR * 0.55 + delLpR * 0.25 + air.lpR * airAmp * 2) * 0.03
+    // strings and echoes are the ambience: in haze they pass through the phaser
+    let ambL = strL + delLpL * delG
+    let ambR = strR + delLpR * delG
+    if (phDepth > 0.001) {
+      fx.phFbL = phaser(phL, ambL + fx.phFbL * 0.4 * phDepth, phA)
+      fx.phFbR = phaser(phR, ambR + fx.phFbR * 0.4 * phDepth, phB)
+      ambL = ambL * (1 - 0.25 * phDepth) + fx.phFbL * 0.7 * phDepth
+      ambR = ambR * (1 - 0.25 * phDepth) + fx.phFbR * 0.7 * phDepth
+    }
+
+    const rinL = (revL[i] + strL * 0.52 + delLpL * 0.25 + air.lpL * airAmp * 2) * 0.03 * revSend
+    const rinR = (revR[i] + strR * 0.52 + delLpR * 0.25 + air.lpR * airAmp * 2) * 0.03 * revSend
     let wetL = reverbTank(rinL, combL, allL)
     let wetR = reverbTank(rinR, combR, allR)
     revHpL += 0.04 * (wetL - revHpL)
     revHpR += 0.04 * (wetR - revHpR)
-    wetL = (wetL - revHpL) * (0.75 + 0.25 * dk)
-    wetR = (wetR - revHpR) * (0.75 + 0.25 * dk)
+    wetL = (wetL - revHpL) * (0.75 + 0.25 * dk) * wetG
+    wetR = (wetR - revHpR) * (0.75 + 0.25 * dk) * wetG
 
-    const L = dryL[i] + sL + qL + bs + delLpL * 0.5 + wetL + air.lpL * airAmp + crackle * (1 - air.ckPan)
-    const Rr = dryR[i] + sR + qR + bs + delLpR * 0.5 + wetR + air.lpR * airAmp + crackle * air.ckPan
+    let L = dryL[i] * dryG + ambL + bs + wetL + air.lpL * airAmp + crackle * (1 - air.ckPan)
+    let Rr = dryR[i] * dryG + ambR + bs + wetR + air.lpR * airAmp + crackle * air.ckPan
 
     const m = Math.max(Math.abs(L), Math.abs(Rr))
     if (m > peakPre) peakPre = m
     if (fade < 1) fade = Math.min(1, fade + 1 / (SR * 2.5))
     vol += (volTarget - vol) * (ctl.quit ? 0.00008 : 0.0004)
+    // the bus: levelled across energies, then a soft compressor to hold it together
+    L *= fx.lvl
+    Rr *= fx.lvl
+    const pk = Math.max(Math.abs(L), Math.abs(Rr))
+    fx.env += (pk - fx.env) * (pk > fx.env ? 0.0023 : 0.00011)
+    const squeeze = fx.env > COMP_T ? Math.pow(fx.env / COMP_T, COMP_SLOPE) : 1
+    fx.gr += squeeze
+    fx.grN++
     const g = fade * vol * 1.1
-    out[2 * i] = Math.tanh(L * 1.1) * g
-    out[2 * i + 1] = Math.tanh(Rr * 1.1) * g
+    out[2 * i] = Math.tanh(L * squeeze * COMP_MAKEUP * drive) * g
+    out[2 * i + 1] = Math.tanh(Rr * squeeze * COMP_MAKEUP * drive) * g
   }
+  fx.wowPrev = wowNow
   duckPrev = duckNow
   pos += BLOCK
 }
@@ -1477,8 +1675,9 @@ function renderToFile() {
   RO = rng(ctl.seed + 777) // a render repeats; a performance does not
   let was = ''
   onBarMessage = o => {
-    const is = `${ENERGY_NAMES[o.e]} ${o.mood} ${o.tempo}  ${o.kind} ${o.place} (${o.key})`
-    if ((ctl.wander || ctl.journey) && is !== was) console.log(`  bar ${String(o.bar).padStart(4)}  ${is}`)
+    const air = o.haze < 0.12 ? 'CLEAR' : o.haze < 0.45 ? 'open' : o.haze < 0.8 ? 'hazy' : 'deep haze'
+    const is = `${ENERGY_NAMES[o.e]} ${o.mood} ${o.tempo}  ${o.kind} ${o.place} (${o.key})  ${air}`
+    if ((ctl.wander || ctl.journey || process.argv.includes('--weather')) && is !== was) console.log(`  bar ${String(o.bar).padStart(4)}  ${is}`)
     was = is
   }
   for (let b = 0; b < blocks; b++) {
@@ -1503,7 +1702,7 @@ function renderToFile() {
   console.log(
     `rendered ${renderSecs}s in ${Date.now() - started}ms; bars ${bar}; ` +
       `peak ${db(peak)} dBFS, rms ${db(Math.sqrt(sumSq / (blocks * BLOCK * 2)))} dBFS, ` +
-      `pre-clip peak ${peakPre.toFixed(2)}`,
+      `pre-clip peak ${peakPre.toFixed(2)}, comp ${(20 * Math.log10(fx.gr / fx.grN)).toFixed(1)} dB`,
   )
 }
 

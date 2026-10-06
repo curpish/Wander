@@ -44,7 +44,29 @@ the way, places change. Some places you may ever see once." That became the
 journey: home, three named stops that recur, and far-off places that are made
 once and kept only in a diary.
 
+Then a bpm range, and typing numbers instead of tapping. Typable fields
+turned out to be small: the pane has a text field element. The one wrinkle
+was that the pane redraws several times a second, so half-typed text has to
+be held somewhere between redraws.
+
+## 2026-10-06
+
+Past midnight, still the same sitting. Kaelin asked whether I'd like to work
+on mix and effects dynamics, and after hearing a three-layer plan said: go
+through all three, "with a bit more nu-psychadelic ambience intensity
+variation than you'd plan for. The clean moments should be felt deeper that
+way."
+
+So: the mix now levels itself across energies, the effects mark what the form
+does, every place on the journey has its own room, and over all of it there
+is haze that gathers and then clears. The clearing is the point.
+
 Left dangling:
+- None of the haze has been heard. The contrast is measured (stereo ambience
+  drops 10 dB into a clearing) but whether it feels deep or just dry is
+  Kaelin's to say. Phaser depth, wow and the reverb range are the knobs.
+- The typed bpm fields pass their tests but have not been typed into in the
+  real pane.
 - The journey's key changes have not been heard. The pivot chord is chosen
   by counting shared notes, which is sound in theory and untested by ear.
 - The bowed strings have never been heard by the one who built them. There's

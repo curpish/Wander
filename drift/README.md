@@ -35,7 +35,8 @@ Ctrl+C stops it. To write a file instead of playing:
 | --- | --- |
 | mood | key, scale and tempo: `dusk` D dorian, `fog` F lydian, `ember` A minor, `glass` G mixolydian |
 | energy | `still` (piano, strings, air) up through `breathe`, `pulse`, `flow` to `bloom` (everything) |
-| tempo | 70 to 132 bpm |
+| tempo | `-` `+`, or click the bpm field, type a number and press Enter |
+| bpm range | a typed minimum and maximum (60 to 160). The tempo stays inside it, and the moods are spread across it: fog at the bottom, then dusk, ember, and glass at the top |
 | wander | lets the music move between energies by itself, and rarely moods (see below) |
 | journey | lets the harmony travel between keys and come home (see below) |
 | reroll all | a new seed: new chords, new piano motif, new rhythms, a new path for wander |
@@ -43,6 +44,7 @@ Ctrl+C stops it. To write a file instead of playing:
 | `-` `+` on a track | that track's own level, 0 to 150 (100 is where the mix was balanced) |
 | `↻` on a track | reroll just that track and keep the rest |
 | air color | tilts the air from `deep` (a low rumble) to `bright` (a hiss) |
+| haze | how far the ambience may swell; shows what the air is doing now |
 | strings | crossfades the strings from `pad` (the synth) to `bowed` (the string model) |
 
 What a track's own reroll changes:
@@ -100,6 +102,41 @@ The desk shows where you are, its key, and where it is leaving for once that
 is decided. Turning journey off brings the harmony home at the next section.
 
     node drift/engine/drift.cjs --journey 1 --wander 1
+
+## The mix in motion
+
+Three things move the mix.
+
+**It balances itself.** Loudness is evened out across the energies (they span
+about 2 LU now; it was 5), a soft bus compressor holds the tracks together
+(about 2 dB of squeeze at `flow` and `bloom`, none at `still`), the strings'
+low end steps back while the bass is sounding, and the kick ducks harder as
+the energy rises.
+
+**The effects follow the form.** The pad filter follows the energy over a
+couple of bars instead of jumping. Now and then the last note of a piano
+phrase is thrown into the delay. On a far crossing the reverb swells and the
+dry sound dips.
+
+**Every place has its own room.** Reverb length and darkness, delay time and
+feedback, and a little saturation belong to the place, and the sound slides
+from one room to the next. Home's room is always the same. Somewhere seen once
+is an extreme: a bare, close room, or a vast one.
+
+Over all of it lies the **haze**: how far the ambience has swollen. In haze
+the reverb is longer and louder, the echoes repeat more and drift in pitch,
+and the strings and echoes pass through a slow phaser. It leans a new way
+every eight bars. Now and then it gathers for a section and is then gone for
+the next, and coming home usually clears it. A clearing is dry and close on
+purpose: in one measured passage, deep haze to a clearing dropped the stereo
+ambience by 10 dB while the centre of the mix stayed within 1 dB.
+
+The `haze` control sets how far it may go (0 keeps every moment clean), and
+shows what the air is doing now: clear, open, hazy or deep.
+
+    node drift/engine/drift.cjs --render 600 out.wav --journey 1 --weather
+
+prints the timeline of places and haze as it renders.
 
 ## How the music is put together
 
