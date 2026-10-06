@@ -98,3 +98,28 @@ Left dangling:
 - Check-on-save and the single-key commands at the desk were tested with a
   stand-in for the keyboard, not in a real terminal.
 - Whether `progress.json` and `desk.py` belong in git.
+
+Later still: Kaelin asked for an adaptive assessment in chat instead, one
+open question at a time, and said they want to write complete programs. It
+turned into designing one: a program that stirs curiosity. Kaelin's
+contributions were to define a feeling by what gets mistaken for it and by
+its opposites, and to keep the log to explicit facts ("even user responses
+in words are not fully factual, they are simply the words that the user
+wishes to present").
+
+We agreed to build it in small slices, starting with the log. Kaelin builds
+and maintains the files; I review.
+
+Left dangling:
+- The trail is parked. I don't plan to build on it.
+
+That evening the first slice got written: `projects/curiosity/log.py`, all
+Kaelin's, with the folder layout and the `start`/`resume` event kinds their
+own choices. Three runs, three lines in the log. Along the way: a relative
+path depends on where you run from, a name inside a list comprehension only
+exists there, and `item_id` felt "nonsensical" because it was being asked to
+be a sequence number.
+
+Left dangling:
+- Kaelin wants to see elegant ways to pass data into the log.
+- No items exist yet, so nothing gives `item_id` a real value.
