@@ -145,3 +145,23 @@ test('the desk follows a wandering engine, and wander can be switched off', { ti
   expect(desk.sent().energy).toBe(4)
   expect(desk.sent().rev).toBe(1)
 })
+
+test('the desk says where the journey is, and keeps what it will not see again', { timeoutMs: 20_000 }, async ($, on) => {
+  const desk = await openDesk($, on, {
+    ...BAR,
+    place: 'Tin Ferry',
+    key: 'E lydian',
+    kind: 'once',
+    next: 'home',
+    arrived: true,
+  })
+  expect(desk.spawned[0]).toContain('--journey')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /at Tin Ferry . E lydian, seen only this once, leaving for home/ })).toBeDefined()
+
+  const diary = await $.command.run({ command: 'drift', args: 'diary' } as Parameters<typeof $.command.run>[0])
+  expect(diary.text).toContain('Tin Ferry (E lydian)')
+
+  await ui.press({ key: 'journey' })
+  expect(desk.sent().journey).toBe(false)
+})

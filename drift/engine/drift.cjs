@@ -6,7 +6,8 @@
 //   node drift.cjs [--mood dusk] [--energy 2] [--tempo 108] [--volume 0.6]
 //                  [--seed 1] [--mute kick,air]
 //   node drift.cjs --render 60 out.wav [--sweep]     (offline, no playback)
-//   add --wander 1 to let it move between energies, and rarely moods
+//   add --wander 1 to let it move between energies, and rarely moods,
+//   and --journey 1 to let the harmony travel between keys
 //
 // While playing it prints one JSON line per bar and per step on stdout, and
 // re-reads a small control file (its path is the first line printed) so a
@@ -27,10 +28,10 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 
 // root is a MIDI note; avoid is the scale degree whose chord is diminished.
 // All four are modes of one scale, so a change of mood shares every note.
 const MOODS = {
-  dusk: { root: 50, scale: [0, 2, 3, 5, 7, 9, 10], avoid: 5, swing: 0.12, bright: 0.8, bpm: 108 },
-  fog: { root: 53, scale: [0, 2, 4, 6, 7, 9, 11], avoid: 3, swing: 0.08, bright: 0.65, bpm: 96 },
-  ember: { root: 45, scale: [0, 2, 3, 5, 7, 8, 10], avoid: 1, swing: 0.14, bright: 0.75, bpm: 114 },
-  glass: { root: 43, scale: [0, 2, 4, 5, 7, 9, 10], avoid: 2, swing: 0.1, bright: 1, bpm: 120 },
+  dusk: { root: 50, scale: [0, 2, 3, 5, 7, 9, 10], avoid: 5, swing: 0.12, bright: 0.8, bpm: 108, mode: 'dorian' },
+  fog: { root: 53, scale: [0, 2, 4, 6, 7, 9, 11], avoid: 3, swing: 0.08, bright: 0.65, bpm: 96, mode: 'lydian' },
+  ember: { root: 45, scale: [0, 2, 3, 5, 7, 8, 10], avoid: 1, swing: 0.14, bright: 0.75, bpm: 114, mode: 'aeolian' },
+  glass: { root: 43, scale: [0, 2, 4, 5, 7, 9, 10], avoid: 2, swing: 0.1, bright: 1, bpm: 120, mode: 'mixolydian' },
 }
 
 // ---------------------------------------------------------------- controls
@@ -47,6 +48,7 @@ const ctl = {
   seeds: perTrack(0), // each track's own reroll, on top of the seed
   color: 0.5, // the air: 0 a low rumble, 1 a bright hiss
   bow: 0.7, // the strings: 0 the synth pad, 1 bowed strings, between a blend
+  journey: false, // let the harmony travel: leave home, stop in other keys, return
   wander: false, // let the music move between energies, and rarely moods
   rev: 0, // bumped when a person sets energy, mood or tempo by hand
   quit: false,
@@ -69,6 +71,7 @@ function applyControl(o) {
   if (typeof o.color === 'number') ctl.color = clamp(o.color, 0, 1)
   if (typeof o.bow === 'number') ctl.bow = clamp(o.bow, 0, 1)
   if (o.wander !== undefined) ctl.wander = Boolean(o.wander)
+  if (o.journey !== undefined) ctl.journey = Boolean(o.journey)
   if (typeof o.rev === 'number') ctl.rev = o.rev
   if (o.quit === true) ctl.quit = true
 }
@@ -680,7 +683,7 @@ let vol = 0.6
 let peakPre = 0
 
 function midi(deg) {
-  return mood.root + 12 * Math.floor(deg / 7) + mood.scale[((deg % 7) + 7) % 7]
+  return place.root + 12 * Math.floor(deg / 7) + place.scale[((deg % 7) + 7) % 7]
 }
 
 // a track's own randomness: the seed, its own reroll, and whatever else varies it
@@ -694,13 +697,146 @@ function chordName(deg) {
   return NOTE_NAMES[midi(deg) % 12] + (third === 3 ? 'm' : '') + (seventh === 11 ? 'maj7' : '7')
 }
 
-function genProg() {
-  const pool = [0, 2, 3, 4, 5, 6, 1].filter(d => d !== mood.avoid)
-  prog = [0]
-  while (prog.length < 4) {
-    const d = pick(R, pool)
-    if (d !== prog[prog.length - 1] && !(prog.length === 3 && d === 0)) prog.push(d)
+// ---------------------------------------------------------------- the journey
+// The harmony travels. A place is a key and a mode with four chords of its
+// own. Home is the mood's. A few stops lie a step or two away and are come
+// back to, so they grow familiar. And now and then the road passes through
+// somewhere far off that is made on the spot, stayed in once, and never
+// made again.
+
+// off: semitones from the parent major key up to this mode's tonic;
+// avoid: the scale degree whose chord is diminished
+const MODES = {
+  ionian: { off: 0, avoid: 6 },
+  dorian: { off: 2, avoid: 5 },
+  phrygian: { off: 4, avoid: 4 },
+  lydian: { off: 5, avoid: 3 },
+  mixolydian: { off: 7, avoid: 2 },
+  aeolian: { off: 9, avoid: 1 },
+}
+const MAJOR = [0, 2, 4, 5, 7, 9, 11]
+const NAME_A = ['Low', 'Salt', 'Hollow', 'Pale', 'Far', 'Quiet', 'Amber', 'Winter', 'Glass', 'Slow', 'Blue', 'Thin', 'Lantern', 'Moss', 'Ash', 'Tin', 'Night', 'Copper', 'Rain', 'Second']
+const NAME_B = ['Harbor', 'Marsh', 'Quay', 'Stair', 'Orchard', 'Crossing', 'Field', 'Station', 'Reach', 'Causeway', 'Shoal', 'Terrace', 'Well', 'Ferry', 'Yard', 'Gate', 'Viaduct', 'Meadow', 'Pier', 'Arcade']
+
+let place = null // where the harmony is now
+let home = null
+let stops = []
+let RJ = rng(4) // the itinerary among known places
+let RO = Math.random // somewhere seen once comes from nowhere repeatable
+const trip = { stay: 3, next: null, pivot: 0, pivotUntil: -1, lastOnce: 0, last: null, arrived: false, isFar: false }
+
+// parent is the pitch class of the major key the mode belongs to: two places
+// are near when their parents are few fifths apart
+function makePlace(parent, mode, r, name, kind) {
+  const off = MODES[mode].off
+  const first = MAJOR.indexOf(off)
+  const pc = (parent + off) % 12
+  const pool = [0, 2, 3, 4, 5, 6, 1].filter(d => d !== MODES[mode].avoid)
+  const chords = [0]
+  while (chords.length < 4) {
+    const d = pick(r, pool)
+    if (d !== chords[chords.length - 1] && !(chords.length === 3 && d === 0)) chords.push(d)
   }
+  return {
+    name,
+    kind,
+    mode,
+    parent,
+    root: 43 + ((pc - 43 + 120) % 12),
+    scale: MAJOR.map((_, k) => (MAJOR[(first + k) % 7] - off + 12) % 12),
+    avoid: MODES[mode].avoid,
+    prog: chords,
+  }
+}
+
+function placeName(r) {
+  for (;;) {
+    const first = pick(r, NAME_A)
+    const last = pick(r, NAME_B)
+    // no two stops share a word, so they are easy to tell apart
+    if (!stops.some(s => s.name.startsWith(first + ' ') || s.name.endsWith(' ' + last))) return `${first} ${last}`
+  }
+}
+
+// Home and the stops around it: one a fifth up, one a fifth down, and one
+// either further out or on home's own notes seen from another side.
+function buildJourney() {
+  RJ = rng(live.seed * 48271 + live.mood.length * 7 + 11)
+  const hp = (mood.root - MODES[mood.mode].off + 120) % 12
+  home = makePlace(hp, mood.mode, R, 'home', 'home')
+  stops = []
+  for (const k of [-1, 1, pick(RJ, [-2, 2, 0])]) {
+    const modes = ['dorian', 'lydian', 'aeolian', 'mixolydian', 'ionian'].filter(m => k !== 0 || m !== mood.mode)
+    stops.push(makePlace((hp + 7 * k + 120) % 12, pick(RJ, modes), RJ, placeName(RJ), 'stop'))
+  }
+  place = home
+  prog = place.prog
+  trip.stay = 3 + Math.floor(RJ() * 2)
+  trip.next = null
+  trip.pivotUntil = -1
+  trip.last = null
+}
+
+function makeOnce() {
+  const k = pick(RO, [-4, -3, 3, 4, 5, 6, -2, 2])
+  const mode = pick(RO, ['lydian', 'dorian', 'aeolian', 'mixolydian', 'ionian', 'phrygian'])
+  return makePlace((home.parent + 7 * k + 120) % 12, mode, RO, placeName(RO), 'once')
+}
+
+// The chord to arrive on: the one of the new place that shares the most
+// notes with the old, so the last two bars of the road belong to both.
+function pivotDegree(from, to) {
+  const old = new Set(from.scale.map(s => (from.root + s) % 12))
+  let best = 0
+  let bestShared = -1
+  for (const d of [4, 3, 1, 5, 2, 6, 0]) {
+    if (d === to.avoid) continue
+    let shared = 0
+    for (const t of [0, 2, 4, 6]) if (old.has((to.root + to.scale[(d + t) % 7]) % 12)) shared++
+    if (shared > bestShared) {
+      bestShared = shared
+      best = d
+    }
+  }
+  return best
+}
+
+// Decided every eight bars: stay, or pick where to go. The move itself is
+// two bars before the next section, on the pivot chord.
+function travel() {
+  trip.arrived = false
+  if (bar % 8 === 6 && trip.next) {
+    const from = place
+    place = trip.next
+    trip.next = null
+    prog = place.prog
+    trip.pivot = pivotDegree(from, place)
+    trip.pivotUntil = bar + 2
+    trip.isFar = from.kind === 'once' || place.kind === 'once'
+    trip.stay = place.kind === 'home' ? 3 + Math.floor(RJ() * 3) : 2 + Math.floor(RJ() * 2)
+    if (place.kind === 'once') trip.lastOnce = bar
+    trip.arrived = true
+    return
+  }
+  if (bar === 0 || bar % 8 !== 0 || trip.next) return
+  if (!ctl.journey) {
+    if (place !== home) trip.next = home
+    return
+  }
+  if (--trip.stay > 0) return
+  const canOnce = bar >= 48 && bar - trip.lastOnce >= 96
+  const others = stops.filter(s => s !== place && s !== trip.last)
+  if (place === home) trip.next = canOnce && RO() < 0.2 ? makeOnce() : pick(RJ, others)
+  else if (place.kind === 'once') trip.next = RJ() < 0.6 ? home : pick(RJ, stops)
+  else {
+    trip.last = place
+    if (RJ() < 0.5) trip.next = home
+    else trip.next = canOnce && RO() < 0.3 ? makeOnce() : pick(RJ, others)
+  }
+}
+
+function chordAt() {
+  return bar < trip.pivotUntil ? trip.pivot : prog[Math.floor(bar / 2) % 4]
 }
 
 function genMotif() {
@@ -837,8 +973,10 @@ function displayRows() {
 
 function setTargets() {
   const e = cur.energy
-  T.kick = e >= 2 && !isBreak ? 1 : 0
-  T.bass = e >= 2 && !isBreak ? 1 : 0
+  // crossing to or from somewhere far, the ground drops away for the two bars
+  const isCrossing = trip.isFar && bar < trip.pivotUntil
+  T.kick = e >= 2 && !isBreak && !isCrossing ? 1 : 0
+  T.bass = e >= 2 && !isBreak && !isCrossing ? 1 : 0
   T.hats = e >= 1 ? (isBreak ? 0.6 : 1) : 0
   T.perc = e >= 1 ? 1 : 0
   T.piano = 1
@@ -882,7 +1020,8 @@ function wander() {
     return
   }
   if (cur.energy === arc.target) {
-    if (cur.energy <= 1 && bar - arc.moodAt >= 96 && RA() < 0.25) {
+    // a new mood is a new home: only moved to from the old one
+    if (cur.energy <= 1 && place === home && !trip.next && bar - arc.moodAt >= 96 && RA() < 0.25) {
       cur.mood = pick(RA, Object.keys(MOODS).filter(m => m !== cur.mood))
       arc.tempoTo = MOODS[cur.mood].bpm
       arc.moodAt = bar
@@ -914,13 +1053,14 @@ function onBar(w) {
       live.seed = ctl.seed
       mood = MOODS[live.mood]
       R = rng(live.seed * 2654435761 + live.mood.length)
-      genProg()
+      buildJourney()
       RP = trackRng('piano', 0)
       if (isNewSeed) RA = rng(live.seed * 31337 + 5)
       if (isNewSeed || motif.length === 0) genMotif()
       patKey = ''
     }
   }
+  travel()
   if (live.pianoSeed !== ctl.seeds.piano) {
     live.pianoSeed = ctl.seeds.piano
     RP = trackRng('piano', 0)
@@ -934,8 +1074,9 @@ function onBar(w) {
   if (bar % 32 === 28) isBreak = cur.energy >= 2 && R() < 0.6
   if (bar % 32 === 0) {
     isBreak = false
-    if (bar > 0 && R() < 0.5) {
-      const pool = [2, 3, 4, 5, 6].filter(d => d !== mood.avoid)
+    // without the journey, the one progression still shifts a chord now and then
+    if (bar > 0 && !ctl.journey && place === home && R() < 0.5) {
+      const pool = [2, 3, 4, 5, 6].filter(d => d !== place.avoid)
       prog[1 + Math.floor(R() * 3)] = pick(R, pool)
     }
   }
@@ -953,7 +1094,7 @@ function onBar(w) {
   setTargets()
 
   const e = live.energy
-  const chord = prog[Math.floor(bar / 2) % 4]
+  const chord = chordAt()
   const base = chord + 7 * Math.round((63 - midi(chord)) / 12)
   const bassM = 33 + ((midi(chord) - 33 + 120) % 12)
 
@@ -1013,8 +1154,8 @@ function onBar(w) {
     if (H() < 0.4) barPiano.push({ step: 6, m: bassM + 19, v: 0.32, len: 20 })
   }
 
-  if (arc.didShift && G.air > 0.05) {
-    // a shift of energy is marked by a soft glint over the new section
+  if ((arc.didShift || trip.arrived) && G.air > 0.05) {
+    // a shift of energy, or an arrival, is marked by a soft glint
     for (const d of [0, 4]) {
       spawn(shimmerVoice(freq(midi(base + 14 + d)), 0.8), { wait: w, gain: 0.0022 * G.air, pan: d ? 0.5 : -0.5, rev: 0.9, del: 0.4 })
     }
@@ -1043,6 +1184,11 @@ function onBar(w) {
       mood: cur.mood,
       tempo: Math.round(cur.tempo),
       to: ctl.wander ? arc.target : cur.energy,
+      place: place.name,
+      key: `${NOTE_NAMES[place.root % 12]} ${place.mode}`,
+      kind: place.kind,
+      next: trip.next ? trip.next.name : undefined,
+      arrived: trip.arrived || undefined,
     })
   }
 }
@@ -1057,7 +1203,7 @@ function onStep(w) {
   const at = w + (step & 1 ? mood.swing * stepSamples : 0)
   const late = () => at + H() * 0.003 * SR
   const feel = () => 0.85 + H() * 0.3
-  const chord = prog[Math.floor(bar / 2) % 4]
+  const chord = chordAt()
   const base = chord + 7 * Math.round((63 - midi(chord)) / 12)
   const isFill = bar % 8 === 7 && step >= 12 && e >= 2
 
@@ -1328,10 +1474,11 @@ function renderToFile() {
   let sumSq = 0
   let peak = 0
   const started = Date.now()
+  RO = rng(ctl.seed + 777) // a render repeats; a performance does not
   let was = ''
   onBarMessage = o => {
-    const is = `${ENERGY_NAMES[o.e]} ${o.mood} ${o.tempo}`
-    if (ctl.wander && is !== was) console.log(`  bar ${String(o.bar).padStart(4)}  ${is}`)
+    const is = `${ENERGY_NAMES[o.e]} ${o.mood} ${o.tempo}  ${o.kind} ${o.place} (${o.key})`
+    if ((ctl.wander || ctl.journey) && is !== was) console.log(`  bar ${String(o.bar).padStart(4)}  ${is}`)
     was = is
   }
   for (let b = 0; b < blocks; b++) {

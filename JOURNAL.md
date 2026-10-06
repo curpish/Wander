@@ -38,7 +38,15 @@ Kaelin sent a picture of the desk working, with the faders moved: kick 80,
 bass 60, strings 70, air 10. Those became the new defaults, the first part of
 the mix set by ear. Their reflection on the evening is in GROWTH.md.
 
+After the first commit and push, Kaelin chose "chords that travel" and gave
+it its shape: "Think of the idea of 'harmonic journey'. There are stops along
+the way, places change. Some places you may ever see once." That became the
+journey: home, three named stops that recur, and far-off places that are made
+once and kept only in a diary.
+
 Left dangling:
+- The journey's key changes have not been heard. The pivot chord is chosen
+  by counting shared notes, which is sound in theory and untested by ear.
 - The bowed strings have never been heard by the one who built them. There's
   a pad-to-bowed control so Kaelin can find the blend by ear.
 - The mix was set by reading meters, so it probably wants tuning by ear.

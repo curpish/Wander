@@ -37,6 +37,7 @@ Ctrl+C stops it. To write a file instead of playing:
 | energy | `still` (piano, strings, air) up through `breathe`, `pulse`, `flow` to `bloom` (everything) |
 | tempo | 70 to 132 bpm |
 | wander | lets the music move between energies by itself, and rarely moods (see below) |
+| journey | lets the harmony travel between keys and come home (see below) |
 | reroll all | a new seed: new chords, new piano motif, new rhythms, a new path for wander |
 | 1-7 | mute a track: kick, bass, hats, perc, piano, strings, air |
 | `-` `+` on a track | that track's own level, 0 to 150 (100 is where the mix was balanced) |
@@ -75,6 +76,30 @@ energy, mood or tempo by hand takes effect at once, and wander carries on from
 there after a short hold.
 
     node drift/engine/drift.cjs --wander 1
+
+## The journey
+
+With journey on, the harmony travels. A place is a key and a mode with four
+chords of its own, and there are three kinds:
+
+- **Home** is the mood's own key. The journey always comes back to it and
+  stays longest there.
+- **Stops** are three named places near home: one a fifth up, one a fifth
+  down, and one either further out or on home's own notes seen from another
+  side. They are the same three each time (until a reroll or a new mood), so
+  they grow familiar.
+- **Places seen once** are far-off keys made on the spot, stayed in for a
+  couple of sections, and never made again. They come up roughly every ten
+  minutes at most. `/drift diary` lists the ones you have passed through.
+
+The move happens two bars before a section starts, on a pivot chord: the chord
+of the new place that shares the most notes with the old one. Crossing to or
+from somewhere far, the kick and bass drop out for those two bars.
+
+The desk shows where you are, its key, and where it is leaving for once that
+is decided. Turning journey off brings the harmony home at the next section.
+
+    node drift/engine/drift.cjs --journey 1 --wander 1
 
 ## How the music is put together
 

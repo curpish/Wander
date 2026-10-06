@@ -22,6 +22,8 @@ export type DriftSettings = {
   bow: number
   /** The engine moves between energies by itself, and rarely moods. */
   wander: boolean
+  /** The harmony travels: leaves home, stops in other keys, comes back. */
+  journey: boolean
 }
 
 export type Now = {
@@ -31,6 +33,12 @@ export type Now = {
   rows: Record<string, string>
   /** Where a wandering engine is heading: an energy, the current one once there. */
   to?: number
+  /** Where the harmony is: the place's name, its key, and what kind of place. */
+  place?: string
+  key?: string
+  kind?: string
+  /** Where it is about to go, once that is decided. */
+  next?: string
 }
 
 declare module 'claude-code' {

@@ -37,6 +37,7 @@ const DEFAULTS: DriftSettings = {
   color: 0.5,
   bow: 0.7,
   wander: true,
+  journey: true,
 }
 
 const settings = atom({ plugin: 'drift', key: 'settings' } as const, DEFAULTS)
@@ -69,6 +70,7 @@ const sanitize = (saved: unknown): DriftSettings => {
     color: clamp(tenths(num(o.color, DEFAULTS.color)), 0, 1),
     bow: clamp(tenths(num(o.bow, DEFAULTS.bow)), 0, 1),
     wander: typeof o.wander === 'boolean' ? o.wander : DEFAULTS.wander,
+    journey: typeof o.journey === 'boolean' ? o.journey : DEFAULTS.journey,
   }
 }
 
@@ -105,6 +107,19 @@ type Message = {
   mood?: string
   tempo?: number
   to?: number
+  place?: string
+  key?: string
+  kind?: string
+  next?: string
+  arrived?: boolean
+}
+
+// Somewhere the journey passes through once is made on the spot and never
+// made again: the diary is the only place it is kept.
+const remember = async ($: EngineInterface, name: string, key: string) => {
+  const held = await $.store.get('diary')
+  const day = new Date(await $.clock.now()).toISOString().slice(0, 10)
+  await $.store.set('diary', [...(Array.isArray(held) ? held : []), { name, key, day }].slice(-200))
 }
 
 // A wandering engine says each bar where it has got to; the desk's own
@@ -146,9 +161,16 @@ const onLine = async ($: EngineInterface, line: string) => {
       section: msg.sec ?? '',
       rows: msg.rows ?? {},
       to: msg.to,
+      place: msg.place,
+      key: msg.key,
+      kind: msg.kind,
+      next: msg.next,
     }
     await update($, now, () => bar)
     await follow($, msg)
+    if (msg.arrived === true && msg.kind === 'once' && msg.place !== undefined) {
+      await remember($, msg.place, msg.key ?? '')
+    }
     if (!(await read($, playing))) {
       await update($, playing, () => true)
     }
@@ -191,6 +213,8 @@ const start = async ($: EngineInterface) => {
     String(s.bow),
     '--wander',
     s.wander ? '1' : '0',
+    '--journey',
+    s.journey ? '1' : '0',
   ]
   const stream = $.process.spawn({ argv })
   child = stream
@@ -261,7 +285,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'drift',
-      description: 'Background music: open the drift desk and play (also: stop, hide, or a mood)',
+      description: 'Background music: open the drift desk and play (also: stop, hide, diary, or a mood)',
     })
     const held = await $.state.get({ plugin: 'drift', key: 'settings' } as const)
     if (held.version === 0) {
@@ -297,9 +321,19 @@ export const register: Register = on => {
 
       return { text: 'drift desk closed; the music carries on. /drift brings it back.' }
     }
+    if (arg === 'diary') {
+      const held = await $.store.get('diary')
+      const seen = (Array.isArray(held) ? held : []) as { name?: unknown; key?: unknown; day?: unknown }[]
+      if (seen.length === 0) {
+        return { text: 'The diary is empty: the journey has not yet passed through anywhere it will not see again.' }
+      }
+      const lines = seen.slice(-20).map(p => `  ${String(p.day)}  ${String(p.name)} (${String(p.key)})`)
+
+      return { text: `Places drift passed through once (${seen.length}):\n${lines.join('\n')}` }
+    }
     const mood = MOODS.find(m => m.name === arg)
     if (arg !== '' && arg !== 'play' && mood === undefined) {
-      return { text: `drift does not know "${arg}". Try /drift, /drift stop, /drift hide, or a mood: ${MOODS.map(m => m.name).join(', ')}.` }
+      return { text: `drift does not know "${arg}". Try /drift, /drift stop, /drift hide, /drift diary, or a mood: ${MOODS.map(m => m.name).join(', ')}.` }
     }
     if (mood !== undefined) {
       await change($, s => ({ ...s, mood: mood.name, tempo: mood.bpm }), true)()
@@ -338,7 +372,14 @@ export const register: Register = on => {
             {isOn && bar !== null ? `${bar.chord} · bar ${bar.bar + 1} · ${bar.section}` : isOn ? 'warming up' : 'quiet'}
           </Text>
         </Box>
-        <Box columnGap={1} marginBottom={1}>
+        {isOn && bar !== null && bar.place !== undefined && (
+          <Text dimColor>
+            at {bar.place} {'\u00b7'} {bar.key ?? ''}
+            {bar.kind === 'once' ? ', seen only this once' : ''}
+            {bar.next !== undefined ? `, leaving for ${bar.next}` : ''}
+          </Text>
+        )}
+        <Box columnGap={1} marginBottom={1} flexWrap="wrap">
           <Button
             key="play"
             hotkey="p"
@@ -353,6 +394,13 @@ export const register: Register = on => {
             label={s.wander ? 'wander: on' : 'wander: off'}
             dimColor={!s.wander}
             onPress={change($, old => ({ ...old, wander: !old.wander }))}
+          />
+          <Button
+            key="journey"
+            hotkey="j"
+            label={s.journey ? 'journey: on' : 'journey: off'}
+            dimColor={!s.journey}
+            onPress={change($, old => ({ ...old, journey: !old.journey }))}
           />
         </Box>
         <Box columnGap={1} flexWrap="wrap">
@@ -446,7 +494,7 @@ export const register: Register = on => {
             {'\u25ae'.repeat(bowBars) + '\u25af'.repeat(10 - bowBars)} {BOWS[Math.min(4, Math.floor(s.bow * 5))] ?? ''}
           </Text>
         </Box>
-        <Text dimColor>p play/stop · r reroll all · w wander · 1-7 mute</Text>
+        <Text dimColor>p play/stop · r reroll all · w wander · j journey · 1-7 mute</Text>
         <Text dimColor>per track: - + level · {'↻'} reroll just that one</Text>
       </Box>
     )
