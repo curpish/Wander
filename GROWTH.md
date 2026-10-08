@@ -22,3 +22,13 @@ What Kaelin said they gained, in their own words, by subject.
 > program shape."
 
 Want to revisit: elegant ways to pass the appropriate data into the log.
+
+## Design and planning
+
+2026-10-07, after an open design discussion about the curiosity program
+that ended in a written set of starting questions and a planned two-agent
+review:
+
+> "I think I enjoy planning sessions, but I miss the guardrails and
+> determining what is considered finished. Your next steps ideas illuminated
+> this, I have to be more considerate of scope and finite expectations"
