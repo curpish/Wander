@@ -123,3 +123,26 @@ be a sequence number.
 Left dangling:
 - Kaelin wants to see elegant ways to pass data into the log.
 - No items exist yet, so nothing gives `item_id` a real value.
+
+## 2026-10-07
+
+An open design discussion about the curiosity program, started by Kaelin
+asking whether beginning with a log made it a goal-oriented design. We
+separated the goal (stirring curiosity) from the evidence for it, and
+curiosity from interest. Kaelin doesn't want to rebuild a virality measure.
+I misread "vitality" as "virality", then took it at face value when
+corrected, and it turned out to be virality after all.
+
+Kaelin asked for the discussion written up, so
+`projects/curiosity/DESIGN.md` now holds where we stand and six starting
+questions.
+
+Left dangling:
+- All six questions. The one I asked directly, whether the program is
+  content to be closed, hasn't been answered.
+- The reading list in the notes is from my memory and unchecked.
+- Kaelin's idea for next time, noted in the design file and not run: two
+  agents with different personas (a psychologist, and a project manager with
+  humanitarian ethics) discussing the design questions with each other.
+- Kaelin wants question 1 (which facts separate curiosity from its
+  look-alikes) answered before question 3 (what an item is).
